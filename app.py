@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Page setup
+# Page configuration
 st.set_page_config(
     page_title="CineMatch",
     page_icon="🎬",
@@ -15,21 +15,20 @@ st.set_page_config(
 @st.cache_data
 def load_movies():
     df = pd.read_csv("cinematch_movies.csv")
-
+    
     text_columns = [
         "title", "overview", "genres", "actors",
         "directors", "keywords", "language",
         "certification", "poster"
     ]
-
     for col in text_columns:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str)
-
+            
     for col in ["year", "rating", "vote_count", "runtime"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
+            
     df["combined_features"] = (
         df["overview"] + " " +
         df["genres"] + " " +
@@ -54,7 +53,7 @@ cosine_sim = build_model(movies["combined_features"].tolist())
 # Website heading
 st.title("🎬 CineMatch")
 st.subheader("Your Personalized Movie Finder")
-st.write("Discover movies, explore genres, and find your next favourite film with explainable recommendations!")
+st.write("Discover movies across generations, explore genres, and find your next favourite film with explainable AI recommendations!")
 
 st.divider()
 
@@ -74,9 +73,9 @@ selected_genres = st.sidebar.multiselect(
     genre_options
 )
 
-# Safe range resolution for release year slider to prevent StreamlitInvalidMinMaxError
-min_year = int(movies["year"].min()) if not movies.empty else 1900
-max_year = int(movies["year"].max()) if not movies.empty else 2026
+# Dynamic slider logic
+min_year = int(movies["year"].min()) if not movies.empty else 1950
+max_year = int(movies["year"].max()) if not movies.empty else 2023
 if min_year == max_year:
     min_year = min_year - 1
 
@@ -188,7 +187,7 @@ else:
             st.write(movie["overview"] or "No description available.")
             st.divider()
 
-# Similar movie recommendations with explanation logic
+# Explainable AI recommendations
 st.header("✨ Find Similar Movies (Explainable AI Engine)")
 
 movie_titles = sorted(movies["title"].dropna().unique())
@@ -205,39 +204,39 @@ number_to_show = st.slider(
 if st.button("Recommend Movies"):
     selected_row = movies[movies["title"] == selected_movie].iloc[0]
     movie_index = movies[movies["title"] == selected_movie].index[0]
-
+    
     scores = list(enumerate(cosine_sim[movie_index]))
     scores = sorted(scores, key=lambda x: x[1], reverse=True)
-
+    
     recommendations = [
         item for item in scores if item[0] != movie_index
     ][:number_to_show]
-
+    
     st.subheader(f"Movies similar to {selected_movie}")
-
+    
     rec_columns = st.columns(3)
     for i, (index, score) in enumerate(recommendations):
         rec_movie = movies.iloc[index]
-
-        # Explainer calculations:
+        
+        # Explainable logic thresholds
         source_genres = set([g.strip().lower() for g in selected_row["genres"].split(",") if g.strip()])
         rec_genres = set([g.strip().lower() for g in rec_movie["genres"].split(",") if g.strip()])
         shared_genres = source_genres.intersection(rec_genres)
-
+        
         source_actors = set([a.strip().lower() for a in selected_row["actors"].split(",") if a.strip()])
         rec_actors = set([a.strip().lower() for a in rec_movie["actors"].split(",") if a.strip()])
         shared_actors = source_actors.intersection(rec_actors)
-
+        
         source_keywords = set([k.strip().lower() for k in selected_row["keywords"].split(",") if k.strip()])
         rec_keywords = set([k.strip().lower() for k in rec_movie["keywords"].split(",") if k.strip()])
         shared_keywords = source_keywords.intersection(rec_keywords)
-
+        
         shared_director = False
         if selected_row["directors"] and rec_movie["directors"]:
             s_dirs = set([d.strip().lower() for d in selected_row["directors"].split(",") if d.strip()])
             r_dirs = set([d.strip().lower() for d in rec_movie["directors"].split(",") if d.strip()])
             shared_director = len(s_dirs.intersection(r_dirs)) > 0
-
+            
         with rec_columns[i % 3]:
             if rec_movie["poster"].startswith("http"):
                 st.image(rec_movie["poster"], use_container_width=True)
@@ -245,7 +244,7 @@ if st.button("Recommend Movies"):
             st.write(f"⭐ Rating: {rec_movie['rating']}/10")
             st.write(f"🎭 {rec_movie['genres']}")
             st.write(f"**Similarity match:** {score * 100:.1f}%")
-
+            
             # Dynamic explanation block
             st.info("🔍 **Why is this recommended?**")
             reasons = []
@@ -257,10 +256,10 @@ if st.button("Recommend Movies"):
                 reasons.append(f"• Actor overlap: Features shared cast: **{', '.join(list(shared_actors)).title()}**")
             if shared_keywords:
                 reasons.append(f"• Story elements: Both stories involve themes of **{', '.join(list(shared_keywords)[:4]).title()}**")
-
+                
             if not reasons:
                 reasons.append("• Matched via contextual plot/overview semantics.")
-
+                
             st.markdown("\n".join(reasons))
             st.divider()
 
