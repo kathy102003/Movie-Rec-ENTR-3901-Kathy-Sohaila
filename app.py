@@ -5,37 +5,52 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Page setup
+# Set wide-screen page layout
 st.set_page_config(
-    page_title="CineMatch - Netflix Style",
+    page_title="CineMatch - Netflix Stream",
     page_icon="🍿",
     layout="wide"
 )
 
-# Custom styling for Dark Netflix theme
+# Redesigned dark-theme Netflix CSS injector
 st.markdown("""
 <style>
     .main {
         background-color: #141414;
         color: #FFFFFF;
     }
-    h1, h2, h3, h4 {
+    h1, h2, h3, h4, h5 {
         color: #E50914 !important;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     }
     .stButton>button {
         background-color: #E50914;
         color: white;
         border: none;
+        font-weight: bold;
+        padding: 0.5rem 2rem;
         border-radius: 4px;
     }
     .stButton>button:hover {
         background-color: #B20710;
         color: white;
     }
+    .movie-card {
+        background-color: #181818;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid #222;
+        margin-bottom: 20px;
+    }
+    .match-tag {
+        color: #46d369;
+        font-weight: bold;
+        font-size: 14px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Load movie database
+# Load database safely
 @st.cache_data
 def load_movies():
     df = pd.read_csv("cinematch_movies.csv")
@@ -47,11 +62,11 @@ def load_movies():
     for col in text_columns:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str)
-
+    
     for col in ["year", "rating", "vote_count", "runtime"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
+            
     df["combined_features"] = (
         df["overview"] + " " +
         df["genres"] + " " +
@@ -63,71 +78,117 @@ def load_movies():
 
 movies = load_movies()
 
-# Create recommendation model
+# Fit TF-IDF model
 @st.cache_resource
-def build_model(features):
+def get_tfidf_resources(features):
     vectorizer = TfidfVectorizer(stop_words="english")
     matrix = vectorizer.fit_transform(features)
-    similarity = cosine_similarity(matrix)
-    return similarity
+    return vectorizer, matrix
 
-cosine_sim = build_model(movies["combined_features"].tolist())
+vectorizer, tfidf_matrix = get_tfidf_resources(movies["combined_features"].tolist())
 
-# Netflix App Header
+# Application Headers
 st.title("🍿 CineMatch")
-st.write("Netflix-style personalized streaming experience powered by Content-Based Filtering & NLP Engine")
-
-# 1. Netflix Hero Banner
-if not movies.empty:
-    hero_movie = movies.sort_values(by="rating", ascending=False).iloc[0]
-    st.image(hero_movie["poster"] if hero_movie["poster"].startswith("http") else "https://via.placeholder.com/1200x400/141414/ffffff?text=CineMatch+Spotlight", use_container_width=True)
-    st.markdown(f"## **Spotlight:** {hero_movie['title']} ({int(hero_movie['year'])})")
-    st.markdown(f"⭐ Rating: {hero_movie['rating']}/10  |  🇣 Genres: {hero_movie['genres']}")
-    st.write(hero_movie["overview"])
+st.write("Experience search, browsing, and discovery fully tailored to your preferences.")
 st.divider()
 
-# 2. Dynamic Personalization ("Because you liked...")
-st.sidebar.header("👤 Netflix Personalization Profile")
-user_history_title = st.sidebar.selectbox("Set your active watch history:", sorted(movies["title"].tolist()))
+# Sidebar Filters
+st.sidebar.header("🔎 Discovery Controls")
 
-if user_history_title:
-    st.header(f"🎬 Because you watched: **{user_history_title}**")
+# 1. Text Filters
+search_title = st.sidebar.text_input("Title Search", "")
+search_director = st.sidebar.text_input("Director", "")
+
+# 2. Year Range Slider
+min_year, max_year = int(movies["year"].min()), int(movies["year"].max())
+year_range = st.sidebar.slider("Year Range", min_year, max_year, (min_year, max_year))
+
+# 3. Categorical Selectors
+genres_list = sorted(list(set([g.strip() for sublist in movies["genres"].str.split(",") for g in sublist if g.strip()])))
+selected_genre = st.sidebar.selectbox("Genre", ["All"] + genres_list)
+
+languages_list = sorted(movies["language"].unique().tolist())
+selected_lang = st.sidebar.selectbox("Language", ["All"] + languages_list)
+
+# 4. Semantic Search Prompt
+st.sidebar.divider()
+st.sidebar.subheader("🧠 Semantic Search Prompt")
+user_prompt = st.sidebar.text_area("Describe your ideal movie mood:", placeholder="e.g., a dark psychological crime drama set in New York")
+
+# Apply Filter Pipeline
+filtered_df = movies.copy()
+
+if search_title.strip():
+    filtered_df = filtered_df[filtered_df["title"].str.contains(search_title, case=False, na=False)]
     
-    idx = movies[movies["title"] == user_history_title].index[0]
-    sim_scores = list(enumerate(cosine_sim[idx]))
-    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-    rec_indices = [i[0] for i in sim_scores if i[0] != idx][:4]
+if search_director.strip():
+    filtered_df = filtered_df[filtered_df["directors"].str.contains(search_director, case=False, na=False)]
+
+filtered_df = filtered_df[
+    (filtered_df["year"] >= year_range[0]) &
+    (filtered_df["year"] <= year_range[1])
+]
+
+if selected_genre != "All":
+    filtered_df = filtered_df[filtered_df["genres"].str.contains(selected_genre, case=False, na=False)]
+
+if selected_lang != "All":
+    filtered_df = filtered_df[filtered_df["language"] == selected_lang]
+
+# 1. Spotlight Feature Banner (Dynamic or Highest Rated)
+if not filtered_df.empty:
+    spotlight_movie = filtered_df.sort_values(by="rating", ascending=False).iloc[0]
+    cols = st.columns([1, 2])
+    with cols[0]:
+        if spotlight_movie["poster"].startswith("http"):
+            st.image(spotlight_movie["poster"], use_container_width=True)
+    with cols[1]:
+        st.markdown(f"# **Spotlight: {spotlight_movie['title']}** ({int(spotlight_movie['year'])})")
+        st.markdown(f"⭐⭐ {spotlight_movie['rating']}/10  |  🎬 Directed by: **{spotlight_movie['directors']}**")
+        st.markdown(f"🎭 *{spotlight_movie['genres']}*  |  🌍 Lang: **{spotlight_movie['language'].upper()}**")
+        st.write(spotlight_movie["overview"])
+else:
+    st.warning("No movie matches the filters in the sidebar.")
+
+st.divider()
+
+# 2. Recommendations via Natural Language Prompt
+if user_prompt.strip():
+    st.header("🎯 Tailored Matches for your Mood")
+    
+    # Calculate similarity with prompt
+    prompt_vector = vectorizer.transform([user_prompt])
+    sim_scores = cosine_similarity(prompt_vector, tfidf_matrix).flatten()
+    
+    # Combine with dataframe
+    movies_with_scores = movies.copy()
+    movies_with_scores["match_percent"] = sim_scores * 100
+    
+    # Sort & display
+    prompt_matches = movies_with_scores.sort_values(by="match_percent", ascending=False).head(4)
     
     rec_cols = st.columns(4)
-    for j, r_idx in enumerate(rec_indices):
-        rec_movie = movies.iloc[r_idx]
+    for j, (_, row) in enumerate(prompt_matches.iterrows()):
         with rec_cols[j]:
-            if rec_movie["poster"].startswith("http"):
-                st.image(rec_movie["poster"], use_container_width=True)
-            st.markdown(f"##### **{rec_movie['title']}**")
-            st.caption(f"{int(rec_movie['year'])} | ⭐ {rec_movie['rating']} | Similarity: {sim_scores[j+1][1]*100:.1f}%")
+            st.markdown(f"<div class='movie-card'>", unsafe_allow_html=True)
+            if row["poster"].startswith("http"):
+                st.image(row["poster"], use_container_width=True)
+            st.markdown(f"##### {row['title']}")
+            st.markdown(f"<span class='match-tag'>{row['match_percent']:.1f}% Match</span>", unsafe_allow_html=True)
+            st.caption(f"{int(row['year'])} | ⭐ {row['rating']} | {row['genres']}")
+            st.markdown("</div>", unsafe_allow_html=True)
+    st.divider()
 
-st.divider()
-
-# 3. Categorized Horizontal Rows (Netflix Shelves)
-st.header("🔥 Trending Now")
-trending_cols = st.columns(4)
-trending_movies = movies.sample(min(4, len(movies)))
-for idx, (_, m) in enumerate(trending_movies.iterrows()):
-    with trending_cols[idx]:
-        if m["poster"].startswith("http"):
-            st.image(m["poster"], use_container_width=True)
-        st.markdown(f"##### **{m['title']}**")
-        st.caption(f"{int(m['year'])} | ⭐ {m['rating']}")
-
-st.divider()
-
-st.header("🏆 Critical Acclaim (Top Rated)")
-top_cols = st.columns(4)
-top_movies = movies.sort_values(by="rating", ascending=False).head(4)
-for idx, (_, m) in enumerate(top_movies.iterrows()):
-    with top_cols[idx]:
-        if m["poster"].startswith("http"):
-            st.image(m["poster"], use_container_width=True)
-        st.markdown(f"##### **{m['title']}**")
-        st.caption(f"{int(m['year'])} | ⭐ {m['rating']}")
+# 3. Traditional Netflix Shelf Rows
+st.header("🔥 Trending Discoveries")
+if not filtered_df.empty:
+    trending_movies = filtered_df.sample(min(4, len(filtered_df)))
+    cols = st.columns(4)
+    for idx, (_, m) in enumerate(trending_movies.iterrows()):
+        with cols[idx]:
+            st.markdown("<div class='movie-card'>", unsafe_allow_html=True)
+            if m["poster"].startswith("http"):
+                st.image(m["poster"], use_container_width=True)
+            st.markdown(f"##### {m['title']}")
+            st.caption(f"{int(m['year'])} | ⭐ {m['rating']} | {m['genres']}")
+            st.markdown("</div>", unsafe_allow_html=True)
