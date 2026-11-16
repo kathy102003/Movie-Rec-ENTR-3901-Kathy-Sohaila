@@ -1,45 +1,25 @@
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Page Configuration
+# Page configuration
 st.set_page_config(
     page_title="CineMatch",
     page_icon="🎬",
     layout="wide"
 )
 
-# Dark Theme CSS Injector
-st.markdown("""
-<style>
-    .main {
-        background-color: #141414;
-        color: #FFFFFF;
-    }
-    h1, h2, h3, h4, h5 {
-        color: #E50914 !important;
-    }
-    .movie-card {
-        background-color: #1c1c1c;
-        padding: 15px;
-        border-radius: 8px;
-        border: 1px solid #2d2d2d;
-        margin-bottom: 15px;
-    }
-    .match-tag {
-        color: #46d369;
-        font-weight: bold;
-        font-size: 15px;
-        margin-top: 5px;
-        display: inline-block;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Fallback poster image path if TMDB load fails
+DEFAULT_POSTER = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=500&auto=format&fit=crop"
 
-# Safe Metadata Loading
+def get_valid_poster(url):
+    if isinstance(url, str) and url.startswith("http"):
+        return url
+    return DEFAULT_POSTER
+
+# Load movie database
 @st.cache_data
 def load_movies():
     df = pd.read_csv("cinematch_movies.csv")
@@ -51,119 +31,247 @@ def load_movies():
     for col in text_columns:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str)
+
     for col in ["year", "rating", "vote_count", "runtime"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
     df["combined_features"] = (
-        df["overview"] + " " + 
-        df["genres"] + " " + 
-        df["keywords"] + " " + 
-        df["actors"] + " " + 
+        df["overview"] + " " +
+        df["genres"] + " " +
+        df["keywords"] + " " +
+        df["actors"] + " " +
         df["directors"]
     )
     return df
 
 movies = load_movies()
 
-# Fit TF-IDF resources for Semantic Querying
+# Create recommendation model
 @st.cache_resource
-def get_tfidf_resources(features):
+def build_model(features):
     vectorizer = TfidfVectorizer(stop_words="english")
     matrix = vectorizer.fit_transform(features)
-    return vectorizer, matrix
+    similarity = cosine_similarity(matrix)
+    return similarity
 
-vectorizer, tfidf_matrix = get_tfidf_resources(movies["combined_features"].tolist())
+cosine_sim = build_model(movies["combined_features"].tolist())
 
-# Layout Header
+# Website heading
 st.title("🎬 CineMatch")
-st.write("Experience advanced semantic search, multi-criteria filtering, and transparent similarity explanations.")
+st.subheader("Your Personalized Movie Finder")
+st.write("Discover movies across generations, explore genres, and find your next favourite film with explainable AI recommendations!")
+
 st.divider()
 
-# Sidebar Filters
-st.sidebar.header("🔎 Advanced Search & Filters")
+# Sidebar filters
+st.sidebar.header("🔎 Find Your Movie")
+search = st.sidebar.text_input("Search movie title")
 
-# Text-based matching
-search_title = st.sidebar.text_input("Title contains:", "")
-search_director = st.sidebar.text_input("Director contains:", "")
-search_actor = st.sidebar.text_input("Actor contains:", "")
+genre_options = sorted({
+    genre.strip()
+    for genres in movies["genres"]
+    for genre in genres.split(",")
+    if genre.strip()
+})
 
-# Year Slider
-min_year = int(movies["year"].min()) if not movies.empty else 1970
-max_year = int(movies["year"].max()) if not movies.empty else 2026
-if min_year == max_year: min_year -= 1
-year_range = st.sidebar.slider("Year Range", min_year, max_year, (min_year, max_year))
+selected_genres = st.sidebar.multiselect(
+    "Choose genres",
+    genre_options
+)
 
-# Dynamic Categorical Selectors
-genres_list = sorted(list(set([g.strip() for sublist in movies["genres"].str.split(",") for g in sublist if g.strip()])))
-selected_genre = st.sidebar.selectbox("Genre", ["All"] + genres_list)
+min_year = int(movies["year"].min()) if not movies.empty else 1950
+max_year = int(movies["year"].max()) if not movies.empty else 2023
+if min_year == max_year:
+    min_year = min_year - 1
 
-languages_list = sorted(movies["language"].unique().tolist())
-selected_lang = st.sidebar.selectbox("Language", ["All"] + languages_list)
+year_range = st.sidebar.slider(
+    "Release year",
+    min_year,
+    max_year,
+    (min_year, max_year)
+)
 
-certifications_list = sorted([x for x in movies["certification"].unique() if x])
-selected_cert = st.sidebar.selectbox("Certification", ["All"] + certifications_list)
+min_rating = st.sidebar.slider(
+    "Minimum rating",
+    0.0, 10.0, 0.0, 0.5
+)
 
-# Semantic Input
-st.sidebar.divider()
-st.sidebar.subheader("🧠 Semantic Match Engine")
-user_prompt = st.sidebar.text_area("Describe your movie vibe:", placeholder="e.g. a dark, mind-bending space adventure with a dramatic relationship")
+min_votes = st.sidebar.number_input(
+    "Minimum votes",
+    min_value=0,
+    value=0
+)
 
-# Apply Filtering Pipeline
-filtered_df = movies.copy()
-if search_title.strip():
-    filtered_df = filtered_df[filtered_df["title"].str.contains(search_title, case=False, na=False)]
-if search_director.strip():
-    filtered_df = filtered_df[filtered_df["directors"].str.contains(search_director, case=False, na=False)]
-if search_actor.strip():
-    filtered_df = filtered_df[filtered_df["actors"].str.contains(search_actor, case=False, na=False)]
+max_runtime = st.sidebar.number_input(
+    "Maximum runtime (minutes)",
+    min_value=0,
+    value=0
+)
 
-filtered_df = filtered_df[
-    (filtered_df["year"] >= year_range[0]) & 
-    (filtered_df["year"] <= year_range[1])
+language_options = sorted(
+    movies["language"].unique().tolist()
+)
+
+selected_language = st.sidebar.selectbox(
+    "Language",
+    ["All"] + language_options
+)
+
+certification_options = sorted(
+    [x for x in movies["certification"].unique() if x]
+)
+
+selected_certification = st.sidebar.selectbox(
+    "Certification",
+    ["All"] + certification_options
+)
+
+actor_search = st.sidebar.text_input("Actor name")
+director_search = st.sidebar.text_input("Director name")
+
+# Apply filters
+filtered = movies.copy()
+
+if search:
+    filtered = filtered[
+        filtered["title"].str.contains(search, case=False, na=False)
+    ]
+
+if selected_genres:
+    filtered = filtered[
+        filtered["genres"].apply(
+            lambda value: all(g in value for g in selected_genres)
+        )
+    ]
+
+filtered = filtered[
+    (filtered["year"] >= year_range[0]) &
+    (filtered["year"] <= year_range[1]) &
+    (filtered["rating"] >= min_rating) &
+    (filtered["vote_count"] >= min_votes)
 ]
 
-if selected_genre != "All":
-    filtered_df = filtered_df[filtered_df["genres"].str.contains(selected_genre, case=False, na=False)]
-if selected_lang != "All":
-    filtered_df = filtered_df[filtered_df["language"] == selected_lang]
-if selected_cert != "All":
-    filtered_df = filtered_df[filtered_df["certification"] == selected_cert]
+if max_runtime > 0:
+    filtered = filtered[filtered["runtime"] <= max_runtime]
 
-# Displays results
-st.header("🍿 Discover Movies")
-if filtered_df.empty:
-    st.warning("No movies matched your filters. Try widening your criteria.")
+if selected_language != "All":
+    filtered = filtered[filtered["language"] == selected_language]
+
+if selected_certification != "All":
+    filtered = filtered[
+        filtered["certification"] == selected_certification
+    ]
+
+if actor_search:
+    filtered = filtered[
+        filtered["actors"].str.contains(actor_search, case=False, na=False)
+    ]
+
+if director_search:
+    filtered = filtered[
+        filtered["directors"].str.contains(director_search, case=False, na=False)
+    ]
+
+# Display movie results
+st.header("🍿 Explore Movies")
+st.write(f"Found **{len(filtered)} movies**")
+
+if filtered.empty:
+    st.warning("No movies found. Try changing your filters.")
 else:
-    cols = st.columns(3)
-    for idx, (_, movie) in enumerate(filtered_df.iterrows()):
-        with cols[idx % 3]:
-            st.markdown("<div class='movie-card'>", unsafe_allow_html=True)
-            if movie["poster"].startswith("http"):
-                st.image(movie["poster"], use_container_width=True)
-            st.markdown(f"#### {movie['title']} ({int(movie['year'])})")
-            st.markdown(f"⭐ **Rating:** {movie['rating']}/10  |  ⏱️ **Runtime:** {int(movie['runtime'])} mins")
-            st.write(movie["overview"])
-            st.markdown("</div>", unsafe_allow_html=True)
+    columns = st.columns(3)
+    for i, (_, movie) in enumerate(filtered.iterrows()):
+        with columns[i % 3]:
+            poster_url = get_valid_poster(movie["poster"])
+            st.image(poster_url, use_container_width=True)
+            st.subheader(movie["title"])
+            st.write(f"📅 Year: {int(movie['year']) if movie['year'] else 'Unknown'}")
+            st.write(f"⭐ Rating: {movie['rating']}/10")
+            st.write(f"🎭 Genres: {movie['genres']}")
+            st.write(f"⏱️ Runtime: {int(movie['runtime'])} minutes")
+            st.write(movie["overview"] or "No description available.")
+            st.divider()
 
-# Semantic Recommendations Block
-if user_prompt.strip():
-    st.divider()
-    st.header("🎯 Intelligent Semantic Recommendations")
-    prompt_vector = vectorizer.transform([user_prompt])
-    scores = cosine_similarity(prompt_vector, tfidf_matrix).flatten()
-    
-    rec_movies = movies.copy()
-    rec_movies["match_percent"] = scores * 100
-    matched_results = rec_movies.sort_values(by="match_percent", ascending=False).head(3)
-    
-    rec_cols = st.columns(3)
-    for j, (_, row) in enumerate(matched_results.iterrows()):
-        with rec_cols[j]:
-            st.markdown("<div class='movie-card'>", unsafe_allow_html=True)
-            if row["poster"].startswith("http"):
-                st.image(row["poster"], use_container_width=True)
-            st.markdown(f"#### {row['title']}")
-            st.markdown(f"<span class='match-tag'>{row['match_percent']:.1f}% Match</span>", unsafe_allow_html=True)
-            st.markdown(f"<br>🎬 **Director:** {row['directors']}<br>🎭 **Genres:** {row['genres']}", unsafe_allow_html=True)
-            st.write(row["overview"])
-            st.markdown("</div>", unsafe_allow_html=True)
+# Explainable AI recommendations
+st.header("✨ Find Similar Movies (Explainable AI Engine)")
+
+movie_titles = sorted(movies["title"].dropna().unique())
+selected_movie = st.selectbox(
+    "Choose a movie you like",
+    movie_titles
+)
+
+number_to_show = st.slider(
+    "Number of recommendations",
+    1, 10, 5
+)
+
+if st.button("Recommend Movies"):
+    selected_row = movies[movies["title"] == selected_movie].iloc[0]
+    movie_index = movies[movies["title"] == selected_movie].index[0]
+
+    scores = list(enumerate(cosine_sim[movie_index]))
+    scores = sorted(scores, key=lambda x: x[1], reverse=True)
+
+    recommendations = [
+        item for item in scores if item[0] != movie_index
+    ][:number_to_show]
+
+    st.subheader(f"Movies similar to {selected_movie}")
+
+    rec_columns = st.columns(3)
+    for i, (index, score) in enumerate(recommendations):
+        rec_movie = movies.iloc[index]
+
+        # Explainable logic thresholds
+        source_genres = set([g.strip().lower() for g in selected_row["genres"].split(",") if g.strip()])
+        rec_genres = set([g.strip().lower() for g in rec_movie["genres"].split(",") if g.strip()])
+        shared_genres = source_genres.intersection(rec_genres)
+
+        source_actors = set([a.strip().lower() for a in selected_row["actors"].split(",") if a.strip()])
+        rec_actors = set([a.strip().lower() for a in rec_movie["actors"].split(",") if a.strip()])
+        shared_actors = source_actors.intersection(rec_actors)
+
+        source_keywords = set([k.strip().lower() for k in selected_row["keywords"].split(",") if k.strip()])
+        rec_keywords = set([k.strip().lower() for k in rec_movie["keywords"].split(",") if k.strip()])
+        shared_keywords = source_keywords.intersection(rec_keywords)
+
+        shared_director = False
+        if selected_row["directors"] and rec_movie["directors"]:
+            s_dirs = set([d.strip().lower() for d in selected_row["directors"].split(",") if d.strip()])
+            r_dirs = set([d.strip().lower() for d in rec_movie["directors"].split(",") if d.strip()])
+            shared_director = len(s_dirs.intersection(r_dirs)) > 0
+
+        with rec_columns[i % 3]:
+            poster_url = get_valid_poster(rec_movie["poster"])
+            st.image(poster_url, use_container_width=True)
+            st.write(f"### **{rec_movie['title']}**")
+            st.write(f"⭐ Rating: {rec_movie['rating']}/10")
+            st.write(f"🎭 {rec_movie['genres']}")
+            st.write(f"**Similarity match:** {score * 100:.1f}%")
+
+            # Dynamic explanation block
+            st.info("🔍 **Why is this recommended?**")
+            reasons = []
+            if shared_genres:
+                reasons.append(f"• Shares genres: **{', '.join(list(shared_genres)).title()}**")
+            if shared_director:
+                reasons.append(f"• Directorial overlap: Directed by the same director (**{rec_movie['directors']}**)")
+            if shared_actors:
+                reasons.append(f"• Actor overlap: Features shared cast: **{', '.join(list(shared_actors)).title()}**")
+            if shared_keywords:
+                reasons.append(f"• Story elements: Both stories involve themes of **{', '.join(list(shared_keywords)[:4]).title()}**")
+
+            if not reasons:
+                reasons.append("• Matched via contextual plot/overview semantics.")
+
+            st.markdown("\n".join(reasons))
+            st.divider()
+
+# Footer
+st.divider()
+st.caption(
+    "CineMatch | This product uses the TMDB API but is not endorsed "
+    "or certified by TMDB."
+)
