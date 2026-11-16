@@ -1,27 +1,49 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # Page setup
 st.set_page_config(
-    page_title="CineMatch",
-    page_icon="🎬",
+    page_title="CineMatch - Netflix Style",
+    page_icon="🍿",
     layout="wide"
 )
+
+# Custom styling for Dark Netflix theme
+st.markdown("""
+<style>
+    .main {
+        background-color: #141414;
+        color: #FFFFFF;
+    }
+    h1, h2, h3, h4 {
+        color: #E50914 !important;
+    }
+    .stButton>button {
+        background-color: #E50914;
+        color: white;
+        border: none;
+        border-radius: 4px;
+    }
+    .stButton>button:hover {
+        background-color: #B20710;
+        color: white;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Load movie database
 @st.cache_data
 def load_movies():
     df = pd.read_csv("cinematch_movies.csv")
-
     text_columns = [
         "title", "overview", "genres", "actors",
         "directors", "keywords", "language",
         "certification", "poster"
     ]
-
     for col in text_columns:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str)
@@ -51,222 +73,61 @@ def build_model(features):
 
 cosine_sim = build_model(movies["combined_features"].tolist())
 
-# Website heading
-st.title("🎬 CineMatch")
-st.subheader("Your Personalized Movie Finder")
-st.write("Discover movies, explore genres, and find your next favourite film with explainable recommendations!")
+# Netflix App Header
+st.title("🍿 CineMatch")
+st.write("Netflix-style personalized streaming experience powered by Content-Based Filtering & NLP Engine")
 
+# 1. Netflix Hero Banner
+if not movies.empty:
+    hero_movie = movies.sort_values(by="rating", ascending=False).iloc[0]
+    st.image(hero_movie["poster"] if hero_movie["poster"].startswith("http") else "https://via.placeholder.com/1200x400/141414/ffffff?text=CineMatch+Spotlight", use_container_width=True)
+    st.markdown(f"## **Spotlight:** {hero_movie['title']} ({int(hero_movie['year'])})")
+    st.markdown(f"⭐ Rating: {hero_movie['rating']}/10  |  🇣 Genres: {hero_movie['genres']}")
+    st.write(hero_movie["overview"])
 st.divider()
 
-# Sidebar filters
-st.sidebar.header("🔎 Find Your Movie")
-search = st.sidebar.text_input("Search movie title", value="")
+# 2. Dynamic Personalization ("Because you liked...")
+st.sidebar.header("👤 Netflix Personalization Profile")
+user_history_title = st.sidebar.selectbox("Set your active watch history:", sorted(movies["title"].tolist()))
 
-genre_options = sorted({
-    genre.strip()
-    for genres in movies["genres"]
-    for genre in genres.split(",")
-    if genre.strip()
-})
-
-selected_genres = st.sidebar.multiselect(
-    "Choose genres",
-    genre_options
-)
-
-# Safe range resolution for release year slider to prevent StreamlitInvalidMinMaxError
-min_year = int(movies["year"].min()) if not movies.empty else 1900
-max_year = int(movies["year"].max()) if not movies.empty else 2026
-if min_year == max_year:
-    min_year = min_year - 1
-
-year_range = st.sidebar.slider(
-    "Release year",
-    min_year,
-    max_year,
-    (min_year, max_year)
-)
-
-min_rating = st.sidebar.slider(
-    "Minimum rating",
-    0.0, 10.0, 0.0, 0.5
-)
-
-min_votes = st.sidebar.number_input(
-    "Minimum votes",
-    min_value=0,
-    value=0
-)
-
-max_runtime = st.sidebar.number_input(
-    "Maximum runtime (minutes)",
-    min_value=0,
-    value=0
-)
-
-language_options = sorted(
-    movies["language"].unique().tolist()
-)
-
-selected_language = st.sidebar.selectbox(
-    "Language",
-    ["All"] + language_options
-)
-
-certification_options = sorted(
-    [x for x in movies["certification"].unique() if x]
-)
-
-selected_certification = st.sidebar.selectbox(
-    "Certification",
-    ["All"] + certification_options
-)
-
-actor_search = st.sidebar.text_input("Actor name", value="")
-director_search = st.sidebar.text_input("Director name", value="")
-
-# Apply filters
-filtered = movies.copy()
-
-if search.strip():
-    filtered = filtered[
-        filtered["title"].str.contains(search.strip(), case=False, na=False)
-    ]
-
-if selected_genres:
-    filtered = filtered[
-        filtered["genres"].apply(
-            lambda value: all(g in value for g in selected_genres)
-        )
-    ]
-
-filtered = filtered[
-    (filtered["year"] >= year_range[0]) &
-    (filtered["year"] <= year_range[1]) &
-    (filtered["rating"] >= min_rating) &
-    (filtered["vote_count"] >= min_votes)
-]
-
-if max_runtime > 0:
-    filtered = filtered[filtered["runtime"] <= max_runtime]
-
-if selected_language != "All":
-    filtered = filtered[filtered["language"] == selected_language]
-
-if selected_certification != "All":
-    filtered = filtered[
-        filtered["certification"] == selected_certification
-    ]
-
-if actor_search.strip():
-    filtered = filtered[
-        filtered["actors"].str.contains(actor_search.strip(), case=False, na=False)
-    ]
-
-if director_search.strip():
-    filtered = filtered[
-        filtered["directors"].str.contains(director_search.strip(), case=False, na=False)
-    ]
-
-# Display movie results
-st.header("🍿 Explore Movies")
-st.write(f"Found **{len(filtered)} movies**")
-
-if filtered.empty:
-    st.warning("No movies found. Try changing your filters.")
-else:
-    columns = st.columns(3)
-    for i, (_, movie) in enumerate(filtered.iterrows()):
-        with columns[i % 3]:
-            if movie["poster"].startswith("http"):
-                st.image(movie["poster"], use_container_width=True)
-            st.subheader(movie["title"])
-            st.write(f"📅 Year: {int(movie['year']) if movie['year'] else 'Unknown'}")
-            st.write(f"⭐ Rating: {movie['rating']}/10")
-            st.write(f"🇣 Genres: {movie['genres']}")
-            st.write(f"⏱️ Runtime: {int(movie['runtime'])} minutes")
-            st.write(movie["overview"] or "No description available.")
-            st.divider()
-
-# Similar movie recommendations with explanation logic
-st.header("✨ Find Similar Movies (Explainable AI Engine)")
-
-movie_titles = sorted(movies["title"].dropna().unique())
-selected_movie = st.selectbox(
-    "Choose a movie you like",
-    movie_titles
-)
-
-number_to_show = st.slider(
-    "Number of recommendations",
-    1, 10, 5
-)
-
-if st.button("Recommend Movies"):
-    selected_row = movies[movies["title"] == selected_movie].iloc[0]
-    movie_index = movies[movies["title"] == selected_movie].index[0]
-
-    scores = list(enumerate(cosine_sim[movie_index]))
-    scores = sorted(scores, key=lambda x: x[1], reverse=True)
-
-    recommendations = [
-        item for item in scores if item[0] != movie_index
-    ][:number_to_show]
-
-    st.subheader(f"Movies similar to {selected_movie}")
-
-    rec_columns = st.columns(3)
-    for i, (index, score) in enumerate(recommendations):
-        rec_movie = movies.iloc[index]
-
-        # Explainer calculations:
-        source_genres = set([g.strip().lower() for g in selected_row["genres"].split(",") if g.strip()])
-        rec_genres = set([g.strip().lower() for g in rec_movie["genres"].split(",") if g.strip()])
-        shared_genres = source_genres.intersection(rec_genres)
-
-        source_actors = set([a.strip().lower() for a in selected_row["actors"].split(",") if a.strip()])
-        rec_actors = set([a.strip().lower() for a in rec_movie["actors"].split(",") if a.strip()])
-        shared_actors = source_actors.intersection(rec_actors)
-
-        source_keywords = set([k.strip().lower() for k in selected_row["keywords"].split(",") if k.strip()])
-        rec_keywords = set([k.strip().lower() for k in rec_movie["keywords"].split(",") if k.strip()])
-        shared_keywords = source_keywords.intersection(rec_keywords)
-
-        shared_director = False
-        if selected_row["directors"] and rec_movie["directors"]:
-            s_dirs = set([d.strip().lower() for d in selected_row["directors"].split(",") if d.strip()])
-            r_dirs = set([d.strip().lower() for d in rec_movie["directors"].split(",") if d.strip()])
-            shared_director = len(s_dirs.intersection(r_dirs)) > 0
-
-        with rec_columns[i % 3]:
+if user_history_title:
+    st.header(f"🎬 Because you watched: **{user_history_title}**")
+    
+    idx = movies[movies["title"] == user_history_title].index[0]
+    sim_scores = list(enumerate(cosine_sim[idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    rec_indices = [i[0] for i in sim_scores if i[0] != idx][:4]
+    
+    rec_cols = st.columns(4)
+    for j, r_idx in enumerate(rec_indices):
+        rec_movie = movies.iloc[r_idx]
+        with rec_cols[j]:
             if rec_movie["poster"].startswith("http"):
                 st.image(rec_movie["poster"], use_container_width=True)
-            st.write(f"### **{rec_movie['title']}**")
-            st.write(f"⭐ Rating: {rec_movie['rating']}/10")
-            st.write(f"🇣 {rec_movie['genres']}")
-            st.write(f"**Similarity match:** {score * 100:.1f}%")
+            st.markdown(f"##### **{rec_movie['title']}**")
+            st.caption(f"{int(rec_movie['year'])} | ⭐ {rec_movie['rating']} | Similarity: {sim_scores[j+1][1]*100:.1f}%")
 
-            # Dynamic explanation block
-            st.info("🔎 **Why is this recommended?**")
-            reasons = []
-            if shared_genres:
-                reasons.append(f"• Shares genres: **{', '.join(list(shared_genres)).title()}**")
-            if shared_director:
-                reasons.append(f"• Directorial overlap: Directed by the same director (**{rec_movie['directors']}**)")
-            if shared_actors:
-                reasons.append(f"• Actor overlap: Features shared cast: **{', '.join(list(shared_actors)).title()}**")
-            if shared_keywords:
-                reasons.append(f"• Story elements: Both stories involve themes of **{', '.join(list(shared_keywords)[:4]).title()}**")
-
-            if not reasons:
-                reasons.append("• Matched via contextual plot/overview semantics.")
-
-            st.markdown("\n".join(reasons))
-            st.divider()
-
-# Footer
 st.divider()
-st.caption(
-    "CineMatch | This product uses the TMDB API but is not endorsed "
-    "or certified by TMDB."
-)
+
+# 3. Categorized Horizontal Rows (Netflix Shelves)
+st.header("🔥 Trending Now")
+trending_cols = st.columns(4)
+trending_movies = movies.sample(min(4, len(movies)))
+for idx, (_, m) in enumerate(trending_movies.iterrows()):
+    with trending_cols[idx]:
+        if m["poster"].startswith("http"):
+            st.image(m["poster"], use_container_width=True)
+        st.markdown(f"##### **{m['title']}**")
+        st.caption(f"{int(m['year'])} | ⭐ {m['rating']}")
+
+st.divider()
+
+st.header("🏆 Critical Acclaim (Top Rated)")
+top_cols = st.columns(4)
+top_movies = movies.sort_values(by="rating", ascending=False).head(4)
+for idx, (_, m) in enumerate(top_movies.iterrows()):
+    with top_cols[idx]:
+        if m["poster"].startswith("http"):
+            st.image(m["poster"], use_container_width=True)
+        st.markdown(f"##### **{m['title']}**")
+        st.caption(f"{int(m['year'])} | ⭐ {m['rating']}")
